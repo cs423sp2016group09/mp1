@@ -3,6 +3,8 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/string.h> 
+#include <linux/slab.h>
+#include <linux/proc_fs.h>
 #include "mp1_given.h"
 
 MODULE_LICENSE("GPL");
@@ -43,19 +45,21 @@ static ssize_t mp1_read (struct file *file, char __user *buffer, size_t count, l
 static ssize_t mp1_write (struct file *file, const char __user *buffer, size_t count, loff_t *data){ 
    // implementation goes here...
    int copied;
-   char * buf;
+   char *buf;
+   list_node *new_node;
+   int pid;
+
    buf = (char *) kmalloc(count,GFP_KERNEL); 
    copied = 0;
    //... put something into the buf, updated copied 
    copy_from_user(buf, buffer, count);
 
    // get pid from char *
-   int pid;
    kstrtoint(buffer, 10, &pid);
    // find the node that corresponds to this list node
 
-   list_node * new_node = kmalloc(sizeof(list_node), GFP_KERNEL);
-   memset(new_node, 0, sizeof list_node);
+   new_node = kmalloc(sizeof(list_node), GFP_KERNEL);
+   memset(new_node, 0, sizeof(list_node));
 
    list_add(&new_node->list, &head);
 
@@ -70,8 +74,7 @@ static const struct file_operations mp1_file = {
    .read = mp1_read,
    .write = mp1_write,
 };
-int init mp1_init(void){
-}
+
 // mp1_init - Called when module is loaded
 int __init mp1_init(void)
 {
