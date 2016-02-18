@@ -5,7 +5,9 @@
 #include <linux/string.h> 
 #include <linux/slab.h>
 #include <linux/proc_fs.h>
+#include <linux/timer.h>
 #include <linux/uaccess.h>
+#include <linux/workqueue.h>
 
 #include "mp1_given.h"
 
@@ -20,19 +22,39 @@ MODULE_DESCRIPTION("CS-423 MP1");
 
 typedef struct node
 {
-   struct list_head list;
-   int pid;
-   int cputime;
+    struct list_head list;
+    int pid;
+    int cputime;
 } list_node;
 #endif
+
 
 static LIST_HEAD(head);
 
 #define FILENAME "status"
 #define DIRECTORY "mp1"
 
+
 static struct proc_dir_entry *proc_dir;
 static struct proc_dir_entry *proc_entry;
+static struct workqueue_struct *wq = 0;
+
+static unsigned long onesec;
+
+
+static void mykmod_work_handler (struct work_struct *W){
+    printk(KERN_INFO "Mykmod work %u jiffies\n", (unsigned) onesec);
+}
+/* setup timer */
+static struct timer_list myTimer;
+
+static DECLARE_DELAYED_WORK(mykmod_work, mykmod_work_handler);
+void timerFun (unsigned long arg) {
+    printk (KERN_INFO "TIMER WENT OFF \n"); 
+    myTimer.expires = jiffies + 5*HZ;
+    add_timer (&myTimer); /* setup the timer again */
+}
+
 
 static int num_failed_to_copy;
 static int finished_writing;
@@ -41,6 +63,8 @@ static ssize_t mp1_read (struct file *file, char __user *buffer, size_t count, l
    // implementation goes here...
    int copied;
    char * buf;
+
+   struct node *i;
    // buf = (char *) kmalloc(count,GFP_KERNEL);
    int char_count;
    
@@ -66,6 +90,15 @@ static ssize_t mp1_read (struct file *file, char __user *buffer, size_t count, l
    if (num_failed_to_copy == 0) {
       finished_writing = 1;
    }
+
+   printk(KERN_ALERT "BEFORE THE FOR EACH");
+   list_for_each_entry(i, &head, list) {
+      printk(KERN_ALERT "INSIDE FOR EACH");
+      printk(KERN_ALERT "pid %d", i->pid);
+   }
+
+   printk(KERN_ALERT "AFTER THE FOR EACH");
+
    // while (num_failed_to_copy > 0) {
    //    printk(KERN_ALERT "copy failed, %d bytes remain\n", num_failed_to_copy);
    //    num_failed_to_copy = copy_to_user(buffer, buf, num_failed_to_copy);
@@ -75,6 +108,7 @@ static ssize_t mp1_read (struct file *file, char __user *buffer, size_t count, l
    kfree(buf);
    return char_count;
 }
+
 static ssize_t mp1_write (struct file *file, const char __user *buffer, size_t count, loff_t *data){ 
    // implementation goes here...
    int copied;
@@ -108,8 +142,8 @@ static ssize_t mp1_write (struct file *file, const char __user *buffer, size_t c
 
    new_node = kmalloc(sizeof(list_node), GFP_KERNEL);
    memset(new_node, 0, sizeof(list_node));
-
-   list_add(&new_node->list, &head);
+   new_node->pid = pid;
+   list_add(&(new_node->list), &head);
 
    // if it doesn't exist, create it
 
@@ -117,39 +151,78 @@ static ssize_t mp1_write (struct file *file, const char __user *buffer, size_t c
    kfree(buf);
    return count;
 }
+
 static const struct file_operations mp1_file = {
-   .owner = THIS_MODULE, 
-   .read = mp1_read,
-   .write = mp1_write,
+    .owner = THIS_MODULE, 
+    .read = mp1_read,
+    .write = mp1_write,
 };
 
 // mp1_init - Called when module is loaded
 int __init mp1_init(void)
 {
-   #ifdef DEBUG
-   printk(KERN_ALERT "MP1 MODULE LOADING\n");
-   #endif
-   // Insert your code here ...
-   
+    unsigned long currentTime;
+    unsigned long expiryTime;
+
+    #ifdef DEBUG
+    printk(KERN_ALERT "MP1 MODULE LOADING\n");
+    #endif
+
+    currentTime = jiffies; 
+    expiryTime = currentTime + 5*HZ; /* HZ gives number of ticks per second */
+    // Insert your code here ...
+
       
-   proc_dir = proc_mkdir(DIRECTORY, NULL);
-   proc_entry = proc_create(FILENAME, 0666, proc_dir, & mp1_file); 
-   printk(KERN_ALERT "MP1 MODULE LOADED\n");
-   return 0;   
+    proc_dir = proc_mkdir(DIRECTORY, NULL);
+    proc_entry = proc_create(FILENAME, 0666, proc_dir, & mp1_file); 
+
+
+    /* pre-defined kernel variable jiffies gives current value of ticks */
+
+    init_timer (&myTimer);
+    myTimer.function = timerFun;
+    myTimer.expires = expiryTime;
+    myTimer.data = 0;
+
+    add_timer (&myTimer);
+    printk (KERN_INFO "timer added \n");
+    //---------------------
+
+    onesec = msecs_to_jiffies(10000);
+    printk(KERN_INFO "Mykmod loaded %u jiffies \n", (unsigned) onesec);
+
+    if (!wq)
+            wq = create_workqueue("mykmod");
+    if (wq)
+        queue_delayed_work(wq,&mykmod_work,onesec);
+
+
+
+    printk(KERN_ALERT "MP1 MODULE LOADED\n");
+    return 0;   
 }
 
 // mp1_exit - Called when module is unloaded
 void __exit mp1_exit(void)
 {
-   #ifdef DEBUG
-   printk(KERN_ALERT "MP1 MODULE UNLOADING\n");
-   #endif
-   // Insert your code here ...
-   
-   proc_remove(proc_entry);
-   proc_remove(proc_dir);
+    #ifdef DEBUG
+    printk(KERN_ALERT "MP1 MODULE UNLOADING\n");
+    #endif
+    //-------------------------
 
-   printk(KERN_ALERT "MP1 MODULE UNLOADED\n");
+    if (!del_timer (&myTimer)) {
+        printk (KERN_INFO "Couldn't remove timer!!\n");
+    }
+    else {
+        printk (KERN_INFO "timer removed \n");
+    }
+    if (wq)
+        destroy_workqueue(wq);
+    printk(KERN_INFO "Mykmod exit\n");
+    proc_remove(proc_entry);
+    proc_remove(proc_dir);
+
+    printk(KERN_ALERT "MP1 MODULE UNLOADED\n");
 }
 
 // Register init and exit funtions
