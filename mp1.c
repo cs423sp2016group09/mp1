@@ -33,16 +33,47 @@ static LIST_HEAD(head);
 
 static struct proc_dir_entry *proc_dir;
 static struct proc_dir_entry *proc_entry;
+
+static int num_failed_to_copy;
+static int finished_writing;
+
 static ssize_t mp1_read (struct file *file, char __user *buffer, size_t count, loff_t *data){
    // implementation goes here...
    int copied;
    char * buf;
-   buf = (char *) kmalloc(count,GFP_KERNEL); 
+   // buf = (char *) kmalloc(count,GFP_KERNEL);
+   int char_count;
+   
+   if (finished_writing == 1) {
+      finished_writing = 0;
+      return 0;
+   } 
+
+   char_count = 3;
+   buf = (char *) kmalloc(char_count,GFP_KERNEL); 
+   buf[0] = 'H';
+   buf[1] = 'I';
+   buf[2] = '\0';
+
    copied = 0;
    //... put something into the buf, updated copied 
-   copy_to_user(buffer, buf, copied);
+   printk(KERN_ALERT "attempting to copy %d bytes\n", char_count);
+   printk(KERN_ALERT "attempting to copy string: %s\n", buf);
+
+   // first time we're copying this
+   num_failed_to_copy = copy_to_user(buffer, buf, char_count);
+
+   if (num_failed_to_copy == 0) {
+      finished_writing = 1;
+   }
+   // while (num_failed_to_copy > 0) {
+   //    printk(KERN_ALERT "copy failed, %d bytes remain\n", num_failed_to_copy);
+   //    num_failed_to_copy = copy_to_user(buffer, buf, num_failed_to_copy);
+   // }
+   // printk(KERN_ALERT "copy done, sending EOF\n");
+   // copy_to_user(buffer, buf, 0);
    kfree(buf);
-   return copied ;
+   return char_count;
 }
 static ssize_t mp1_write (struct file *file, const char __user *buffer, size_t count, loff_t *data){ 
    // implementation goes here...
@@ -51,13 +82,28 @@ static ssize_t mp1_write (struct file *file, const char __user *buffer, size_t c
    list_node *new_node;
    int pid;
 
-   buf = (char *) kmalloc(count,GFP_KERNEL); 
-   copied = 0;
+
+   printk(KERN_ALERT "this is the size of a char pointer in the kernel, %lu", sizeof (buf));
+
+   printk(KERN_ALERT "attempted to write string %s\n", buffer);
+   printk(KERN_ALERT "attempted to write %u bytes\n", (unsigned int) count);
+
+   printk(KERN_ALERT "attempted to allocate %u bytes\n", (unsigned int) count);   
+   buf = (char *) kmalloc(count+1,GFP_KERNEL); 
+   printk(KERN_ALERT "allocated at address %p\n", buf);
+
+
    //... put something into the buf, updated copied 
-   copy_from_user(buf, buffer, count);
+   copied = copy_from_user(buf, buffer, count);
+   buf[count]=0;
+
+   printk(KERN_ALERT "this is the return value: %u", copied);
+   // printk(KERN_ALERT "received this string: %s", buf);
 
    // get pid from char *
-   kstrtoint(buffer, 10, &pid);
+   kstrtoint(buf, 10, &pid);
+
+   printk(KERN_ALERT "read pid = %d", pid);
    // find the node that corresponds to this list node
 
    new_node = kmalloc(sizeof(list_node), GFP_KERNEL);
@@ -100,7 +146,8 @@ void __exit mp1_exit(void)
    #endif
    // Insert your code here ...
    
-   
+   proc_remove(proc_entry);
+   proc_remove(proc_dir);
 
    printk(KERN_ALERT "MP1 MODULE UNLOADED\n");
 }
