@@ -8,7 +8,7 @@
 #include <linux/timer.h>
 #include <linux/uaccess.h>
 #include <linux/workqueue.h>
-#include <linux/semaphore.h>
+#include <linux/mutex.h>
 
 #include "mp1_given.h"
 
@@ -21,13 +21,12 @@ static struct proc_dir_entry *proc_dir;
 static struct proc_dir_entry *proc_entry;
 static struct workqueue_struct *my_wq = 0;
 
-static unsigned long onesec;
 #define FILENAME "status"
 #define DIRECTORY "mp1"
+#define READ_BUFFER_SIZE 1600
+#define LINE_LENGTH 80
 
-/**
- * Code to setup the linked list
- */
+// linked list helper code
 typedef struct node
 {
     struct list_head list;
@@ -36,142 +35,112 @@ typedef struct node
 } list_node;
 
 static LIST_HEAD(head);
-DEFINE_SEMAPHORE(sem_list);
+DEFINE_MUTEX(mutex_list);
 
-/**
- * Work queue helper function
- */ 
+// set up work queue
 static void wq_fun(struct work_struct *work)
 {
     int ret;
-    int count;
-    count=0;
     struct node *i;
+
+    mutex_lock_interruptible(&mutex_list);
     list_for_each_entry(i, &head, list) {
-        // TODO: LOCK
-        down(&sem_list);
         ret = get_cpu_use(i->pid, &(i->cputime));
-        if (ret == -1) {
-            printk(KERN_ALERT "pnf, pid %d\n", i->pid);    
-        } else {
-            printk(KERN_ALERT "ud succ, pid %d, cpu: %d\n ", i->pid, i->cputime); 
-        }
-        up(&sem_list);
-        // TODO: UNLOCK
-        count++;
+        // if (ret == -1) {
+        //     printk(KERN_ALERT "not found, pid %d\n", i->pid);    
+        // } else {
+        //     printk(KERN_ALERT "success, pid %d, cpu: %lu\n ", i->pid, i->cputime); 
+        // }
     }
-    
-    // printk(KERN_ALERT "WENT THROUGH %d LIST NODES\n", count);
+    mutex_unlock(&mutex_list);
+
     return;
 }
 DECLARE_WORK(wq, wq_fun);
 
-/* setup timer */
+// helpers for timer code
 static struct timer_list myTimer;
-
 void timerFun (unsigned long arg) {
     myTimer.expires = jiffies + 5*HZ;
     add_timer (&myTimer); /* setup the timer again */
-    schedule_work(&wq);
+    schedule_work(&wq); // trigger the bottom half
 }
 
 
 static int finished_writing;
 
 static ssize_t mp1_read (struct file *file, char __user *buffer, size_t count, loff_t *data){
-    // implementation goes here...
     int copied;
     char * buf;
     char * line;
-    int linelength;
-    char * bufpointer;
-
+    int line_length;
+    char * buf_curr_pos;
     struct node *i;
-    // buf = (char *) kmalloc(count,GFP_KERNEL);
-    int char_count;
 
+    // must return 0 to signal that we're done writing to cat
     if (finished_writing == 1) {
-      finished_writing = 0;
-      return 0;
+        finished_writing = 0;
+        return 0;
     } 
 
-    char_count = 1600;
-
     copied = 0;
-    //... put something into the buf, updated copied 
 
-    // printk(KERN_ALERT "BEFORE THE FOR EACH");
-    buf = (char *) kmalloc(char_count,GFP_KERNEL);
-    memset(buf, 0, char_count);
-    bufpointer = buf;
+    // allocate a buffer big enough to hold the contents
+    buf = (char *) kmalloc(READ_BUFFER_SIZE, GFP_KERNEL);
+    memset(buf, 0, READ_BUFFER_SIZE);
+    buf_curr_pos = buf;
+    mutex_lock_interruptible(&mutex_list);
     list_for_each_entry(i, &head, list) {
-        line = kmalloc(80, GFP_KERNEL);
-        memset(line, 0, 80);
-        down(&sem_list);
-        sprintf(line, "PID: %d, time: %lu\n", i->pid, i->cputime);
-        up(&sem_list);
-        linelength = strlen(line) + 1;
+        // allocate line long enoguh to hold the string
+        line = kmalloc(LINE_LENGTH, GFP_KERNEL);
+        memset(line, 0, LINE_LENGTH);
 
-        snprintf(bufpointer, linelength, "%s", line);
-        bufpointer += linelength;
-        // printk(KERN_ALERT "attempting to copy %d bytes\n", char_count);
-        // printk(KERN_ALERT "attempting to copy string: %s\n", buf);
-        // printk(KERN_ALERT "INSIDE FOR EACH");
-        // printk(KERN_ALERT "pid %d", i->pid);
+        sprintf(line, "PID: %d, time: %lu\n", i->pid, i->cputime);
+        line_length = strlen(line);
+        
+        snprintf(buf_curr_pos, line_length + 1, "%s", line); // + 1 to account for the null char
+        buf_curr_pos += line_length; // advance the buffer 
+
         kfree(line);
     }
-    copy_to_user(buffer, buf, char_count);
-    finished_writing = 1;
-    // printk(KERN_ALERT "AFTER THE FOR EACH");
+    mutex_unlock(&mutex_list);
 
-    // while (num_failed_to_copy > 0) {
-      // printk(KERN_ALERT "copy failed, %d bytes remain\n", num_failed_to_copy);
-    //   num_failed_to_copy = copy_to_user(buffer, buf, num_failed_to_copy);
-    // }
-    // printk(KERN_ALERT "copy done, sending EOF\n");
-    // copy_to_user(buffer, buf, 0);
+    // debugging code 
+    /*
+    int j;
+    for (j = 0; j < 400; j++)
+        printk(KERN_ALERT "char %d:\t%x\t%c\n", j, (unsigned int) buf[j], buf[j]);
+    */
+
+    copy_to_user(buffer, buf, READ_BUFFER_SIZE);
+    finished_writing = 1; // return 0 on the next run
     kfree(buf);
-    return char_count;
+    return READ_BUFFER_SIZE;
 }
 
 static ssize_t mp1_write (struct file *file, const char __user *buffer, size_t count, loff_t *data){ 
-    // implementation goes here...
     int copied;
     char *buf;
     list_node *new_node;
     int pid;
 
-    // printk(KERN_ALERT "this is the size of a char pointer in the kernel, %lu", sizeof (buf));
-
-    // printk(KERN_ALERT "attempted to write string %s\n", buffer);
-    // printk(KERN_ALERT "attempted to write %u bytes\n", (unsigned int) count);
-
-    // printk(KERN_ALERT "attempted to allocate %u bytes\n", (unsigned int) count);   
+    // manually null terminate
     buf = (char *) kmalloc(count+1,GFP_KERNEL); 
-    // printk(KERN_ALERT "allocated at address %p\n", buf);
-
-
-    //... put something into the buf, updated copied 
     copied = copy_from_user(buf, buffer, count);
     buf[count]=0;
-
-    // printk(KERN_ALERT "this is the return value: %u", copied);
-    // printk(KERN_ALERT "received this string: %s", buf);
 
     // get pid from char *
     kstrtoint(buf, 10, &pid);
 
-    // printk(KERN_ALERT "read pid = %d", pid);
-    // find the node that corresponds to this list node
-
+    // create neew node
     new_node = kmalloc(sizeof(list_node), GFP_KERNEL);
     memset(new_node, 0, sizeof(list_node));
     new_node->pid = pid;
-    down(&sem_list);
-    list_add(&(new_node->list), &head);
-    up(&sem_list);
-    // if it doesn't exist, create it
 
+    // put the node in the linked list
+    mutex_lock_interruptible(&mutex_list);
+    list_add(&(new_node->list), &head);
+    mutex_unlock(&mutex_list);
 
     kfree(buf);
     return count;
@@ -190,29 +159,22 @@ int __init mp1_init(void)
     unsigned long expiryTime;
 
     #ifdef DEBUG
-    // printk(KERN_ALERT "MP1 MODULE LOADING\n");
+        printk(KERN_ALERT "MP1 MODULE LOADING\n");
     #endif
 
+    // set up procfs
     proc_dir = proc_mkdir(DIRECTORY, NULL);
     proc_entry = proc_create(FILENAME, 0666, proc_dir, & mp1_file); 
 
-  
-    currentTime = jiffies; 
+    // set up timer interrupt
+    currentTime = jiffies; // pre-defined kernel variable jiffies gives current value of ticks
     expiryTime = currentTime + 5*HZ; 
-    /* pre-defined kernel variable jiffies gives current value of ticks */
-
     init_timer (&myTimer);
     myTimer.function = timerFun;
     myTimer.expires = expiryTime;
     myTimer.data = 0;
     add_timer (&myTimer);
-    // printk (KERN_INFO "timer added \n");
-    //---------------------
 
-    onesec = msecs_to_jiffies(10000);
-    // printk(KERN_INFO "Mykmod loaded %u jiffies \n", (unsigned) onesec);
-
-    // printk(KERN_ALERT "MP1 MODULE LOADED\n");
     return 0;   
 }
 
@@ -220,23 +182,22 @@ int __init mp1_init(void)
 void __exit mp1_exit(void)
 {
     #ifdef DEBUG
-    // printk(KERN_ALERT "MP1 MODULE UNLOADING\n");
+        printk(KERN_ALERT "MP1 MODULE UNLOADING\n");
     #endif
-    //-------------------------
 
-    if (!del_timer (&myTimer)) {
-        // printk (KERN_INFO "Couldn't remove timer!!\n");
-    }
-    else {
-        // printk (KERN_INFO "timer removed \n");
-    }
+    del_timer (&myTimer);
+
     if (my_wq)
         destroy_workqueue(my_wq);
-    // printk(KERN_INFO "Mykmod exit\n");
+
+    // TODO DESTROY THE LIST
+
     proc_remove(proc_entry);
     proc_remove(proc_dir);
 
-    // printk(KERN_ALERT "MP1 MODULE UNLOADED\n");
+    #ifdef DEBUG
+        printk(KERN_ALERT "MP1 MODULE UNLOADED\n");
+    #endif
 }
 
 // Register init and exit funtions
