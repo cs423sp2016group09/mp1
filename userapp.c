@@ -16,6 +16,8 @@ int main(int argc, char* argv[])
 	// read the proc fs
 
 	fclose(statusfile);
-
+	
+	sleep(30);
+	
 	return 0;
 }
