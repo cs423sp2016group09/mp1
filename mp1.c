@@ -16,43 +16,51 @@ MODULE_AUTHOR("Group_ID");
 MODULE_DESCRIPTION("CS-423 MP1");
 
 #define DEBUG 1
+static struct proc_dir_entry *proc_dir;
+static struct proc_dir_entry *proc_entry;
+static struct workqueue_struct *my_wq = 0;
 
-#ifndef LIST_NODE_H
-#define LIST_NODE_H 
+static unsigned long onesec;
+#define FILENAME "status"
+#define DIRECTORY "mp1"
+
 
 typedef struct node
 {
     struct list_head list;
     int pid;
-    int cputime;
+    long unsigned cputime;
 } list_node;
-#endif
-
 
 static LIST_HEAD(head);
 
-#define FILENAME "status"
-#define DIRECTORY "mp1"
+typedef struct {
+  struct work_struct my_work;
+  int    x;
+} my_work_t;
 
+my_work_t *work;
 
-static struct proc_dir_entry *proc_dir;
-static struct proc_dir_entry *proc_entry;
-static struct workqueue_struct *wq = 0;
+static void my_wq_function( struct work_struct *work)
+{
+  my_work_t *my_work = (my_work_t *)work;
 
-static unsigned long onesec;
+  printk( "my_work.x %d\n", my_work->x );
 
+  kfree( (void *)work );
 
-static void mykmod_work_handler (struct work_struct *W){
-    printk(KERN_INFO "Mykmod work %u jiffies\n", (unsigned) onesec);
+  return;
 }
+
 /* setup timer */
 static struct timer_list myTimer;
 
-static DECLARE_DELAYED_WORK(mykmod_work, mykmod_work_handler);
 void timerFun (unsigned long arg) {
-    printk (KERN_INFO "TIMER WENT OFF \n"); 
     myTimer.expires = jiffies + 5*HZ;
     add_timer (&myTimer); /* setup the timer again */
+    int r;
+    ret = queue_work( my_wq, (struct work_struct *)work );
+
 }
 
 
@@ -116,7 +124,6 @@ static ssize_t mp1_write (struct file *file, const char __user *buffer, size_t c
    list_node *new_node;
    int pid;
 
-
    printk(KERN_ALERT "this is the size of a char pointer in the kernel, %lu", sizeof (buf));
 
    printk(KERN_ALERT "attempted to write string %s\n", buffer);
@@ -139,15 +146,18 @@ static ssize_t mp1_write (struct file *file, const char __user *buffer, size_t c
 
    printk(KERN_ALERT "read pid = %d", pid);
    // find the node that corresponds to this list node
-
+/*
    new_node = kmalloc(sizeof(list_node), GFP_KERNEL);
    memset(new_node, 0, sizeof(list_node));
    new_node->pid = pid;
-   list_add(&(new_node->list), &head);
-
+   if (get_cpu_use(pid,(new_node->cputime)) == 0 ){ 
+     list_add(&(new_node->list), &head);
+   } else {
+     printk(KERN_ALERT "Failed to add node");	
+   }
    // if it doesn't exist, create it
-
-
+*/
+   
    kfree(buf);
    return count;
 }
@@ -168,35 +178,39 @@ int __init mp1_init(void)
     printk(KERN_ALERT "MP1 MODULE LOADING\n");
     #endif
 
-    currentTime = jiffies; 
-    expiryTime = currentTime + 5*HZ; /* HZ gives number of ticks per second */
-    // Insert your code here ...
-
-      
     proc_dir = proc_mkdir(DIRECTORY, NULL);
     proc_entry = proc_create(FILENAME, 0666, proc_dir, & mp1_file); 
+ 
+
+    my_wq = create_workqueue("my_queue");
+    if (my_wq) {
+    /* Queue some work (item 1) */
+    work = (my_work_t *)kmalloc(sizeof(my_work_t), GFP_KERNEL);
+    if (work) {
+      INIT_WORK( (struct work_struct *)work, my_wq_function );
+      work->x = 1;
+
+     }
+    }
 
 
+    if (!my_wq)
+      my_wq = create_workqueue("mykmod");
+  
+    currentTime = jiffies; 
+    expiryTime = currentTime + 5*HZ; 
     /* pre-defined kernel variable jiffies gives current value of ticks */
 
     init_timer (&myTimer);
     myTimer.function = timerFun;
     myTimer.expires = expiryTime;
     myTimer.data = 0;
-
     add_timer (&myTimer);
     printk (KERN_INFO "timer added \n");
     //---------------------
 
     onesec = msecs_to_jiffies(10000);
     printk(KERN_INFO "Mykmod loaded %u jiffies \n", (unsigned) onesec);
-
-    if (!wq)
-            wq = create_workqueue("mykmod");
-    if (wq)
-        queue_delayed_work(wq,&mykmod_work,onesec);
-
-
 
     printk(KERN_ALERT "MP1 MODULE LOADED\n");
     return 0;   
@@ -216,8 +230,8 @@ void __exit mp1_exit(void)
     else {
         printk (KERN_INFO "timer removed \n");
     }
-    if (wq)
-        destroy_workqueue(wq);
+    if (my_wq)
+        destroy_workqueue(my_wq);
     printk(KERN_INFO "Mykmod exit\n");
     proc_remove(proc_entry);
     proc_remove(proc_dir);
