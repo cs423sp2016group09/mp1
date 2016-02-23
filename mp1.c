@@ -181,6 +181,7 @@ int __init mp1_init(void)
 // mp1_exit - Called when module is unloaded
 void __exit mp1_exit(void)
 {
+    struct node *i;
     #ifdef DEBUG
         printk(KERN_ALERT "MP1 MODULE UNLOADING\n");
     #endif
@@ -190,7 +191,9 @@ void __exit mp1_exit(void)
     if (my_wq)
         destroy_workqueue(my_wq);
 
-    // TODO DESTROY THE LIST
+    list_for_each_entry(i, &head, list) {
+	list_del(&head);
+    }
 
     proc_remove(proc_entry);
     proc_remove(proc_dir);
