@@ -9,7 +9,6 @@
 #include <linux/uaccess.h>
 #include <linux/workqueue.h>
 #include <linux/mutex.h>
-
 #include "mp1_given.h"
 
 MODULE_LICENSE("GPL");
@@ -19,7 +18,6 @@ MODULE_DESCRIPTION("CS-423 MP1");
 #define DEBUG 1
 static struct proc_dir_entry *proc_dir;
 static struct proc_dir_entry *proc_entry;
-static struct workqueue_struct *my_wq = 0;
 
 #define FILENAME "status"
 #define DIRECTORY "mp1"
@@ -187,9 +185,6 @@ void __exit mp1_exit(void)
     #endif
 
     del_timer (&myTimer);
-
-    if (my_wq)
-        destroy_workqueue(my_wq);
 
     list_for_each_entry(i, &head, list) {
 	list_del(&head);
