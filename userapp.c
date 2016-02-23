@@ -10,14 +10,14 @@ long long unsigned fac(long long n) {
 	return n*fac(n-1);
 }
 
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
 	  // get pid 
 	  int pid = getpid();
 
 	  // write pid as a string to the proc filesystem
 	  FILE * statusfile = fopen("/proc/mp1/status", "r+");
-	  if (statusfile != NULL){
+
+	  if (statusfile == NULL ) return 1;
 	  fprintf(statusfile, "%d", pid);
 	  // read the proc fs
 
@@ -30,8 +30,7 @@ int main(int argc, char* argv[])
 		  for (i = 0; i < 10000; i++) {
 			  x = fac(33);		
 	  	  }
-	  }	
+	  }
+	
           return 0;
-        } 
-	return 1;
 }
