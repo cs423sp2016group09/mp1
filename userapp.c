@@ -12,23 +12,26 @@ long long unsigned fac(long long n) {
 
 int main(int argc, char* argv[])
 {
-	// get pid 
-	int pid = getpid();
+	  // get pid 
+	  int pid = getpid();
 
-	// write pid as a string to the proc filesystem
-	FILE * statusfile = fopen("/proc/mp1/status", "r+");
-	fprintf(statusfile, "%d", pid);
-	// read the proc fs
+	  // write pid as a string to the proc filesystem
+	  FILE * statusfile = fopen("/proc/mp1/status", "r+");
+	  if (statusfile != NULL){
+	  fprintf(statusfile, "%d", pid);
+	  // read the proc fs
 
-	fclose(statusfile);
+	  fclose(statusfile);
 	
-	long long x = 0;
+	  long long x = 0;
 
-	int i, j;
-	for (j=0; j < 10000; j++) {
-		for (i = 0; i < 10000; i++) {
-			x = fac(33);		
-		}
-	}	
-	return 0;
+	  int i, j;
+	  for (j=0; j < 10000; j++) {
+		  for (i = 0; i < 10000; i++) {
+			  x = fac(33);		
+	  	  }
+	  }	
+          return 0;
+        } 
+	return 1;
 }
