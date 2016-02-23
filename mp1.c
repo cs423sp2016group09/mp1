@@ -179,19 +179,24 @@ int __init mp1_init(void)
 // mp1_exit - Called when module is unloaded
 void __exit mp1_exit(void)
 {
-    struct node *i;
+    list_node *cursor;
+    list_node *next;
     #ifdef DEBUG
         printk(KERN_ALERT "MP1 MODULE UNLOADING\n");
     #endif
-
-    del_timer (&myTimer);
-
-    list_for_each_entry(i, &head, list) {
-	list_del(&head);
-    }
-
+	
+	// remove the procfs entry first so that users can't access it while we're deleting the list
     proc_remove(proc_entry);
     proc_remove(proc_dir);
+    
+    // kill the timer
+    del_timer (&myTimer);
+
+	// remove list node from list, free the wrapping struct
+    list_for_each_entry_safe(cursor, next, &head, list) {
+        list_del(&(cursor->list));
+        kfree(cursor);
+    }
 
     #ifdef DEBUG
         printk(KERN_ALERT "MP1 MODULE UNLOADED\n");
